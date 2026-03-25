@@ -1,16 +1,17 @@
 using UnityEngine;
 
-public class PlayerPaddle : MonoBehaviour
+public class PlayerPaddle : Paddle
 {
-    // Start is called once before the first execution of Update after the MonoBehaviour is created
-    void Start()
+    private Vector2 _direction;
+
+    private void Update()
     {
-        
+        float input = Input.GetAxisRaw("Vertical");
+        _direction = new Vector2(0f, input);
     }
 
-    // Update is called once per frame
-    void Update()
-    {
-        
+    private void FixedUpdate()
+    { 
+        Rb.linearVelocity = new Vector2(0f, _direction.y * speed);
     }
 }

@@ -2,16 +2,11 @@ using UnityEngine;
 
 public class Paddle : MonoBehaviour
 {
-    // Start is called once before the first execution of Update after the MonoBehaviour is created
-    void Start()
-    {
-        Rigidbody rb = GetComponent<Rigidbody>();
-        
-    }
+    [SerializeField] protected float speed;
+    protected Rigidbody2D Rb;
 
-    // Update is called once per frame
-    void Update()
+    private void Awake()
     {
-        
+        Rb = GetComponent<Rigidbody2D>();
     }
 }
