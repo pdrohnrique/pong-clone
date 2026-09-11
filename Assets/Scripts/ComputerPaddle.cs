@@ -2,33 +2,20 @@ using UnityEngine;
 
 public class ComputerPaddle : Paddle
 {
-    public Rigidbody2D ball;
-    
-    [SerializeField] private float deadZone = 0.15f;
-    [SerializeField] private float acceleration = 20f;
-    
-    private float _targetDirectionY;
-    
-    private void Update()
-    {
-        float targetY = ball.linearVelocity.x > 0f ? ball.position.y : 0f;
-        float delta = targetY - transform.position.y;
+    public Transform ball; // Arraste a Bola aqui no Inspector
 
-        if (Mathf.Abs(delta) <= deadZone)
-        {
-            _targetDirectionY = 0f;
-        }
-        else
-        {
-            _targetDirectionY = Mathf.Sign(delta);
-        }
-    }
-    
     private void FixedUpdate()
     {
-        float targetVelocityY = _targetDirectionY * speed;
-        float newVelocityY = Mathf.MoveTowards(Rb.linearVelocity.y, targetVelocityY, acceleration * Time.fixedDeltaTime);
+        if (ball == null) return;
 
-        Rb.linearVelocity = new Vector2(0f, newVelocityY);
+        // 1. O alvo da IA é a sua própria posição X, mas buscando o Y exato da bolinha
+        Vector2 targetPosition = new Vector2(transform.position.x, ball.position.y);
+        
+        // 2. MoveTowards avança até o alvo, mas matematicamente NUNCA passa dele. 
+        // O tamanho do passo é a sua 'speed' multiplicada pelo tempo do frame.
+        Vector2 newPosition = Vector2.MoveTowards(transform.position, targetPosition, speed * Time.fixedDeltaTime);
+        
+        // 3. MovePosition diz para o motor físico mover a raquete exatamente para essa coordenada calculada
+        Rb.MovePosition(newPosition);
     }
 }
