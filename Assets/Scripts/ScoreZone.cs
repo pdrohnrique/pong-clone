@@ -2,18 +2,17 @@ using UnityEngine;
 
 public class ScoreZone : MonoBehaviour
 {
-    public bool isPlayer1Goal; // Marque TRUE no gol da esquerda, deixe FALSE no da direita
-    public GameManager gameManager; // Arraste o GameManager aqui
+    public bool isPlayer1Goal; // TRUE = Gol da Esquerda, FALSE = Gol da Direita
+    public GameManager gameManager;
 
     private void OnTriggerEnter2D(Collider2D collision)
     {
-        // Se o objeto que bater tiver a tag "Ball" (Lembre-se de colocar a tag "Ball" na sua bola!)
         if (collision.gameObject.CompareTag("Ball"))
         {
             if (isPlayer1Goal)
-                gameManager.ComputerScored(); // Bola bateu na esquerda, ponto da IA
+                gameManager.Player2Scored(); // Bola bateu no gol da esquerda -> ponto do Player 2
             else
-                gameManager.PlayerScored(); // Bola bateu na direita, ponto do Player
+                gameManager.Player1Scored(); // Bola bateu no gol da direita -> ponto do Player 1
         }
     }
 }

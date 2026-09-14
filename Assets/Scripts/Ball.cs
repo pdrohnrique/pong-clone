@@ -17,7 +17,12 @@ public class Ball : MonoBehaviour
     private void Start()
     {
         _currentSpeed = initialSpeed;
-        AddStartingForce();
+        // REMOVEMOS O AddStartingForce() DAQUI! A bola agora nasce parada.
+    }
+    
+    public void StartNetworkGame()
+    {
+        ResetBall(); 
     }
 
     private void AddStartingForce()
