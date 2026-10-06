@@ -21,7 +21,7 @@ public class PongUdpServer : MonoBehaviour
         _serverThread.IsBackground = true;
         _serverThread.Start();
         
-        Debug.Log("Servidor UDP rodando na porta 5001...");
+        Debug.Log("Servidor UDP 2v2 rodando na porta 5001 (Aguardando 4 jogadores)...");
     }
 
     private void ReceiveMessages()
@@ -34,14 +34,15 @@ public class PongUdpServer : MonoBehaviour
                 byte[] receivedBytes = _udpServer.Receive(ref clientEndPoint);
                 string message = Encoding.UTF8.GetString(receivedBytes);
 
-                if (!_clients.Contains(clientEndPoint) && _clients.Count < 2)
+                // Agora aguarda até 4 jogadores
+                if (!_clients.Contains(clientEndPoint) && _clients.Count < 4)
                 {
                     _clients.Add(clientEndPoint);
                     int playerId = _clients.Count;
                     SendMessageToClient($"ID:{playerId}", clientEndPoint);
 
-                    // Quando o 2º jogador conecta, avisa AMBOS para começar o jogo
-                    if (_clients.Count == 2)
+                    // Quando o 4º jogador conecta, avisa TODOS para começar o jogo
+                    if (_clients.Count == 4)
                     {
                         BroadcastMessage("START");
                     }

@@ -4,11 +4,16 @@ using System.Net.Sockets;
 using System.Text;
 using System.Threading;
 using System.Globalization;
+using System.Collections.Generic;
 
 public class PongUdpClient : MonoBehaviour
 {
-    public Transform leftPaddle;
-    public Transform rightPaddle;
+    [Header("Raquetes na Cena")]
+    public Transform leftPaddleFront;  // P1: Time A - Atacante
+    public Transform leftPaddleBack;   // P2: Time A - Defensor
+    public Transform rightPaddleFront; // P3: Time B - Atacante
+    public Transform rightPaddleBack;  // P4: Time B - Defensor
+
     public Transform ballTransform;
     public Ball ballScript;
     public GameManager gameManager;
@@ -20,11 +25,10 @@ public class PongUdpClient : MonoBehaviour
 
     private int _myId;
     private bool _gameStarted;
-    private bool _ballInitialized; // Garante que a bola só receba o 1º chute uma vez
+    private bool _ballInitialized; 
     
-    private Transform _myPaddle;
-    private Transform _opponentPaddle;
-    private float _opponentTargetY;
+    // Dicionário para armazenar as posições Y recebidas pela rede para cada ID
+    private Dictionary<int, float> _playerTargetY = new Dictionary<int, float>();
     private Vector2 _networkBallPos;
 
     private bool _hasNewScoreUpdate;
@@ -35,11 +39,21 @@ public class PongUdpClient : MonoBehaviour
     {
         Application.runInBackground = true;
 
+        // Se estiver no modo Singleplayer, cancela a inicialização de rede
+        if (MenuManager.SelectedMode == GameMode.Singleplayer)
+        {
+            this.enabled = false;
+            return;
+        }
+
+        // Inicializa o dicionário de posições de rede para até 4 jogadores
+        for (int i = 1; i <= 4; i++)
+        {
+            _playerTargetY[i] = 0f;
+        }
+
         _udpClient = new UdpClient();
-    
-        // Lê o IP definido pelo usuário no MenuManager
         _serverEndPoint = new IPEndPoint(IPAddress.Parse(MenuManager.ServerIP), 5001);
-    
         _isRunning = true;
 
         _clientThread = new Thread(ReceiveMessages);
@@ -52,68 +66,95 @@ public class PongUdpClient : MonoBehaviour
     }
 
     private void Update()
-{
-    // AMBOS os jogadores jogam com a raquete da ESQUERDA na própria tela!
-    if (_myId != 0 && _myPaddle == null)
     {
-        _myPaddle = leftPaddle;         // Minha raquete na minha tela SEMPRE é a esquerda
-        _opponentPaddle = rightPaddle; // Oponente na minha tela SEMPRE é a direita
-
-        // Ativa o teclado apenas na raquete da esquerda (sua raquete)
-        if (leftPaddle.GetComponent<PlayerPaddle>() != null)
-            leftPaddle.GetComponent<PlayerPaddle>().enabled = true;
-
-        if (rightPaddle.GetComponent<PlayerPaddle>() != null)
-            rightPaddle.GetComponent<PlayerPaddle>().enabled = false;
-    }
-
-    if (!_gameStarted) return;
-
-    if (!_ballInitialized)
-    {
-        _ballInitialized = true;
-        if (_myId == 1 && ballScript != null)
+        // Define qual raquete reage ao seu teclado no início da partida
+        if (_myId != 0 && !_ballInitialized)
         {
-            ballScript.enabled = true;
-            ballScript.StartNetworkGame(); 
+            SetupLocalControls();
+        }
+
+        if (!_gameStarted) return;
+
+        // Jogador 1 inicia o movimento real da bola
+        if (!_ballInitialized)
+        {
+            _ballInitialized = true;
+            if (_myId == 1 && ballScript != null)
+            {
+                ballScript.enabled = true;
+                ballScript.StartNetworkGame(); 
+            }
+        }
+
+        // Atualiza o placar local (Time A = IDs 1 e 2 | Time B = IDs 3 e 4)
+        if (_hasNewScoreUpdate)
+        {
+            _hasNewScoreUpdate = false;
+            
+            if (_myId <= 2) // Time A
+                gameManager.UpdateScoreDirectly(_latestP1Score, _latestP2Score);
+            else // Time B (Inverte a UI)
+                gameManager.UpdateScoreDirectly(_latestP2Score, _latestP1Score); 
+        }
+
+        // Interpola a posição de todos os outros 3 jogadores
+        UpdateOtherPaddles();
+
+        // Envia sua posição Y atual pela rede
+        SendMyPosition();
+
+        // BOLA: Jogador 1 envia, os demais recebem
+        if (_myId == 1 && ballTransform != null)
+        {
+            string ballX = ballTransform.position.x.ToString(CultureInfo.InvariantCulture);
+            string ballY = ballTransform.position.y.ToString(CultureInfo.InvariantCulture);
+            SendMessageToServer($"BALL:{ballX};{ballY}");
+        }
+        else if (_myId > 1 && ballTransform != null)
+        {
+            // IDs 3 e 4 (Time B) veem o eixo X da bola invertido
+            Vector2 targetBallPos = (_myId > 2) ? new Vector2(-_networkBallPos.x, _networkBallPos.y) : _networkBallPos;
+            ballTransform.position = Vector2.Lerp(ballTransform.position, targetBallPos, Time.deltaTime * 30f);
         }
     }
 
-    // Atualiza o placar local mantendo SEU ponto na esquerda
-    if (_hasNewScoreUpdate)
+    private void SetupLocalControls()
     {
-        _hasNewScoreUpdate = false;
-        
-        if (_myId == 1)
-            gameManager.UpdateScoreDirectly(_latestP1Score, _latestP2Score);
-        else
-            gameManager.UpdateScoreDirectly(_latestP2Score, _latestP1Score); // Inverte UI pro P2
+        // Habilita o script de controle (PlayerPaddle) apenas para o seu respectivo ID
+        if (leftPaddleFront != null) leftPaddleFront.GetComponent<PlayerPaddle>().enabled = (_myId == 1);
+        if (leftPaddleBack != null) leftPaddleBack.GetComponent<PlayerPaddle>().enabled = (_myId == 2);
+        if (rightPaddleFront != null) rightPaddleFront.GetComponent<PlayerPaddle>().enabled = (_myId == 3);
+        if (rightPaddleBack != null) rightPaddleBack.GetComponent<PlayerPaddle>().enabled = (_myId == 4);
     }
 
-    // Move a raquete do oponente (recebe o Y direto do outro player)
-    if (_opponentPaddle != null)
+    private void SendMyPosition()
     {
-        Vector2 targetPos = new Vector2(_opponentPaddle.position.x, _opponentTargetY);
-        _opponentPaddle.position = Vector3.Lerp(_opponentPaddle.position, targetPos, Time.deltaTime * 20f);
+        Transform myPaddle = null;
+        if (_myId == 1) myPaddle = leftPaddleFront;
+        else if (_myId == 2) myPaddle = leftPaddleBack;
+        else if (_myId == 3) myPaddle = rightPaddleFront;
+        else if (_myId == 4) myPaddle = rightPaddleBack;
+
+        if (myPaddle != null)
+        {
+            string yPos = myPaddle.position.y.ToString(CultureInfo.InvariantCulture);
+            SendMessageToServer($"POS:{_myId};{yPos}");
+        }
     }
 
-    // Envia o movimento Y do seu teclado para a rede
-    string yPos = _myPaddle.position.y.ToString(CultureInfo.InvariantCulture);
-    SendMessageToServer($"POS:{_myId};{yPos}");
+    private void UpdateOtherPaddles()
+    {
+        if (_myId != 1 && leftPaddleFront != null) MovePaddle(leftPaddleFront, _playerTargetY[1]);
+        if (_myId != 2 && leftPaddleBack != null) MovePaddle(leftPaddleBack, _playerTargetY[2]);
+        if (_myId != 3 && rightPaddleFront != null) MovePaddle(rightPaddleFront, _playerTargetY[3]);
+        if (_myId != 4 && rightPaddleBack != null) MovePaddle(rightPaddleBack, _playerTargetY[4]);
+    }
 
-    // JOGADOR 1: Envia a bola normal
-    if (_myId == 1 && ballTransform != null)
+    private void MovePaddle(Transform paddle, float targetY)
     {
-        string ballX = ballTransform.position.x.ToString(CultureInfo.InvariantCulture);
-        string ballY = ballTransform.position.y.ToString(CultureInfo.InvariantCulture);
-        SendMessageToServer($"BALL:{ballX};{ballY}");
+        Vector2 targetPos = new Vector2(paddle.position.x, targetY);
+        paddle.position = Vector3.Lerp(paddle.position, targetPos, Time.deltaTime * 20f);
     }
-    // JOGADOR 2: Aplica a posição da bola INVERTIDA no eixo X
-    else if (_myId == 2 && ballTransform != null)
-    {
-        ballTransform.position = Vector2.Lerp(ballTransform.position, _networkBallPos, Time.deltaTime * 30f);
-    }
-}
 
     private void ReceiveMessages()
     {
@@ -140,21 +181,22 @@ public class PongUdpClient : MonoBehaviour
                     if (senderId != _myId)
                     {
                         if (float.TryParse(parts[1], NumberStyles.Any, CultureInfo.InvariantCulture, out float parsedY))
-                            _opponentTargetY = parsedY;
+                        {
+                            _playerTargetY[senderId] = parsedY;
+                        }
                     }
                 }
-                else if (message.StartsWith("BALL:") && _myId == 2)
+                else if (message.StartsWith("BALL:") && _myId > 1)
                 {
                     string body = message.Substring(5);
                     string[] parts = body.Split(';');
                     if (float.TryParse(parts[0], NumberStyles.Any, CultureInfo.InvariantCulture, out float bx) &&
                         float.TryParse(parts[1], NumberStyles.Any, CultureInfo.InvariantCulture, out float by))
                     {
-                        // INVERSÃO DA BOLA: Multiplica o X por -1
-                        _networkBallPos = new Vector2(-bx, by);
+                        _networkBallPos = new Vector2(bx, by);
                     }
                 }
-                else if (message.StartsWith("SCORE:") && _myId == 2)
+                else if (message.StartsWith("SCORE:") && _myId > 1)
                 {
                     string body = message.Substring(6);
                     string[] parts = body.Split(';');
