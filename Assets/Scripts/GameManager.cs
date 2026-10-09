@@ -19,10 +19,10 @@ public class GameManager : MonoBehaviour
     public PongUdpClient udpClient;
 
     [Header("Raquetes na Cena")]
-    public GameObject leftPaddleBack;   // P1 / Jogador Principal (Esquerda)
-    public GameObject leftPaddleFront;  // P2 (Time A - Apenas no 2v2)
-    public GameObject rightPaddleFront; // P3 (Time B - Apenas no 2v2)
-    public GameObject rightPaddleBack;  // P4 / IA (Direita)
+    public GameObject leftPaddleBack;   // P1 (1v1) / P2 (2v2 Defensor)
+    public GameObject leftPaddleFront;  // P1 (2v2 Atacante)
+    public GameObject rightPaddleFront; // P3 (2v2 Atacante)
+    public GameObject rightPaddleBack;  // P2 (1v1) / P4 (2v2 Defensor) / IA
 
     private bool _isGameOver;
 
@@ -33,19 +33,18 @@ public class GameManager : MonoBehaviour
         bool isMultiplayer = (MenuManager.SelectedMode != GameMode.Singleplayer);
         bool is2V2 = (MenuManager.SelectedMode == GameMode.Multiplayer2V2);
 
-        // 1. Controla a visibilidade das raquetes avançadas da frente (Ativas apenas no 2v2)
+        // 1. Controla a visibilidade das raquetes da frente (Ativas apenas no 2v2)
         if (leftPaddleFront != null) leftPaddleFront.SetActive(is2V2);
         if (rightPaddleFront != null) rightPaddleFront.SetActive(is2V2);
 
         // 2. MODO MULTIPLAYER (1v1 ou 2v2)
         if (isMultiplayer)
         {
-            // Desativa a IA da raquete direita
-            if (rightPaddleBack != null)
-            {
-                var computer = rightPaddleBack.GetComponent<ComputerPaddle>();
-                if (computer != null) computer.enabled = false;
-            }
+            // Desativa a IA em TODAS as raquetes para não interferir nos comandos da rede
+            DisableComputerPaddle(leftPaddleBack);
+            DisableComputerPaddle(leftPaddleFront);
+            DisableComputerPaddle(rightPaddleFront);
+            DisableComputerPaddle(rightPaddleBack);
 
             // Ativa o cliente de rede
             if (udpClient != null) udpClient.enabled = true; 
@@ -56,7 +55,7 @@ public class GameManager : MonoBehaviour
             if (leftPaddleBack != null)
             {
                 var playerInput = leftPaddleBack.GetComponent<PlayerPaddle>();
-                if (playerInput != null) playerInput.enabled = true; // Jogador controla esquerda
+                if (playerInput != null) playerInput.enabled = true;
             }
 
             if (rightPaddleBack != null)
@@ -64,19 +63,26 @@ public class GameManager : MonoBehaviour
                 var playerInput = rightPaddleBack.GetComponent<PlayerPaddle>();
                 var computer = rightPaddleBack.GetComponent<ComputerPaddle>();
 
-                if (playerInput != null) playerInput.enabled = false; // Desativa teclado na direita
-                if (computer != null) computer.enabled = true;        // Ativa IA na direita
+                if (playerInput != null) playerInput.enabled = false;
+                if (computer != null) computer.enabled = true;
             }
 
-            // Desativa o cliente de rede no modo offline
-            if (udpClient != null) udpClient.enabled = false; 
+            if (udpClient != null) udpClient.enabled = false;
 
-            // Solta a bola imediatamente sem esperar conexões de rede
             if (ball != null)
             {
                 ball.enabled = true;
                 ball.ResetBall();
             }
+        }
+    }
+
+    private void DisableComputerPaddle(GameObject paddle)
+    {
+        if (paddle != null)
+        {
+            var computer = paddle.GetComponent<ComputerPaddle>();
+            if (computer != null) computer.enabled = false;
         }
     }
 
@@ -93,7 +99,7 @@ public class GameManager : MonoBehaviour
         }
         else
         {
-            ball.ResetBall();
+            if (ball != null) ball.ResetBall();
         }
 
         if (MenuManager.SelectedMode != GameMode.Singleplayer && udpClient != null) 
@@ -113,14 +119,13 @@ public class GameManager : MonoBehaviour
         }
         else
         {
-            ball.ResetBall();
+            if (ball != null) ball.ResetBall();
         }
 
         if (MenuManager.SelectedMode != GameMode.Singleplayer && udpClient != null) 
             udpClient.SendScore(player1Score, player2Score);
     }
 
-    // Método chamado via rede para sincronização de placar
     public void UpdateScoreDirectly(int p1, int p2)
     {
         player1Score = p1;

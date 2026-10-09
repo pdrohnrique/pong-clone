@@ -9,10 +9,10 @@ using System.Collections.Generic;
 public class PongUdpClient : MonoBehaviour
 {
     [Header("Raquetes na Cena")]
-    public Transform leftPaddleFront;  // P1: Time A - Atacante
-    public Transform leftPaddleBack;   // P2: Time A - Defensor
-    public Transform rightPaddleFront; // P3: Time B - Atacante
-    public Transform rightPaddleBack;  // P4: Time B - Defensor
+    public Transform leftPaddleFront;  // P1 (2v2 Atacante)
+    public Transform leftPaddleBack;   // P2 (2v2 Defensor) / P1 (1v1)
+    public Transform rightPaddleFront; // P3 (2v2 Atacante)
+    public Transform rightPaddleBack;  // P4 (2v2 Defensor) / P2 (1v1)
 
     public Transform ballTransform;
     public Ball ballScript;
@@ -25,10 +25,16 @@ public class PongUdpClient : MonoBehaviour
 
     private int _myId;
     private bool _gameStarted;
-    private bool _ballInitialized; 
-    
-    // Dicionário para armazenar as posições Y recebidas pela rede para cada ID
-    private Dictionary<int, float> _playerTargetY = new Dictionary<int, float>();
+    private bool _ballInitialized;
+    private bool _controlsConfigured;
+
+    // Posições originais no eixo X salvas para o espelhamento da tela
+    private float _startXLeftFront;
+    private float _startXLeftBack;
+    private float _startXRightFront;
+    private float _startXRightBack;
+
+    private readonly Dictionary<int, float> _playerTargetY = new Dictionary<int, float>();
     private Vector2 _networkBallPos;
 
     private bool _hasNewScoreUpdate;
@@ -39,14 +45,18 @@ public class PongUdpClient : MonoBehaviour
     {
         Application.runInBackground = true;
 
-        // Se estiver no modo Singleplayer, cancela a inicialização de rede
         if (MenuManager.SelectedMode == GameMode.Singleplayer)
         {
             this.enabled = false;
             return;
         }
 
-        // Inicializa o dicionário de posições de rede para até 4 jogadores
+        // Armazena as posições iniciais de X
+        if (leftPaddleFront != null) _startXLeftFront = leftPaddleFront.position.x;
+        if (leftPaddleBack != null) _startXLeftBack = leftPaddleBack.position.x;
+        if (rightPaddleFront != null) _startXRightFront = rightPaddleFront.position.x;
+        if (rightPaddleBack != null) _startXRightBack = rightPaddleBack.position.x;
+
         for (int i = 1; i <= 4; i++)
         {
             _playerTargetY[i] = 0f;
@@ -56,51 +66,62 @@ public class PongUdpClient : MonoBehaviour
         _serverEndPoint = new IPEndPoint(IPAddress.Parse(MenuManager.ServerIP), 5001);
         _isRunning = true;
 
-        _clientThread = new Thread(ReceiveMessages);
-        _clientThread.IsBackground = true;
+        _clientThread = new Thread(ReceiveMessages)
+        {
+            IsBackground = true
+        };
         _clientThread.Start();
 
-        SendMessageToServer("CONNECT");
+        SendMessageToServer($"CONNECT:{MenuManager.SelectedMode}");
 
         if (ballScript != null) ballScript.enabled = false;
     }
 
+    private bool IsTeamB()
+    {
+        bool is2V2 = (MenuManager.SelectedMode == GameMode.Multiplayer2V2);
+        if (is2V2) return (_myId == 3 || _myId == 4);
+        else return (_myId == 2);
+    }
+
     private void Update()
     {
-        // Define qual raquete reage ao seu teclado no início da partida
-        if (_myId != 0 && !_ballInitialized)
+        // Configura controles locais e espelhamento visual assim que recebe o ID do servidor
+        if (_myId != 0 && !_controlsConfigured)
         {
+            _controlsConfigured = true;
             SetupLocalControls();
+            ApplyInitialPositionsAndMirroring();
         }
 
         if (!_gameStarted) return;
 
-        // Jogador 1 inicia o movimento real da bola
+        // Jogador 1 (Time A) inicia o movimento real da bola
         if (!_ballInitialized)
         {
             _ballInitialized = true;
             if (_myId == 1 && ballScript != null)
             {
                 ballScript.enabled = true;
-                ballScript.StartNetworkGame(); 
+                ballScript.StartNetworkGame();
             }
         }
 
-        // Atualiza o placar local (Time A = IDs 1 e 2 | Time B = IDs 3 e 4)
+        // Atualiza o placar local
         if (_hasNewScoreUpdate)
         {
             _hasNewScoreUpdate = false;
             
-            if (_myId <= 2) // Time A
+            if (!IsTeamB())
                 gameManager.UpdateScoreDirectly(_latestP1Score, _latestP2Score);
-            else // Time B (Inverte a UI)
-                gameManager.UpdateScoreDirectly(_latestP2Score, _latestP1Score); 
+            else
+                gameManager.UpdateScoreDirectly(_latestP2Score, _latestP1Score);
         }
 
-        // Interpola a posição de todos os outros 3 jogadores
+        // Interpola a posição Y das outras raquetes
         UpdateOtherPaddles();
 
-        // Envia sua posição Y atual pela rede
+        // Envia a posição Y local para o servidor
         SendMyPosition();
 
         // BOLA: Jogador 1 envia, os demais recebem
@@ -112,28 +133,64 @@ public class PongUdpClient : MonoBehaviour
         }
         else if (_myId > 1 && ballTransform != null)
         {
-            // IDs 3 e 4 (Time B) veem o eixo X da bola invertido
-            Vector2 targetBallPos = (_myId > 2) ? new Vector2(-_networkBallPos.x, _networkBallPos.y) : _networkBallPos;
+            // Se for Time B, inverte a posição X da bola
+            Vector2 targetBallPos = IsTeamB() ? new Vector2(-_networkBallPos.x, _networkBallPos.y) : _networkBallPos;
             ballTransform.position = Vector2.Lerp(ballTransform.position, targetBallPos, Time.deltaTime * 30f);
         }
     }
 
     private void SetupLocalControls()
     {
-        // Habilita o script de controle (PlayerPaddle) apenas para o seu respectivo ID
-        if (leftPaddleFront != null) leftPaddleFront.GetComponent<PlayerPaddle>().enabled = (_myId == 1);
-        if (leftPaddleBack != null) leftPaddleBack.GetComponent<PlayerPaddle>().enabled = (_myId == 2);
-        if (rightPaddleFront != null) rightPaddleFront.GetComponent<PlayerPaddle>().enabled = (_myId == 3);
-        if (rightPaddleBack != null) rightPaddleBack.GetComponent<PlayerPaddle>().enabled = (_myId == 4);
+        bool is2V2 = (MenuManager.SelectedMode == GameMode.Multiplayer2V2);
+
+        SetPlayerPaddleEnabled(leftPaddleFront, false);
+        SetPlayerPaddleEnabled(leftPaddleBack, false);
+        SetPlayerPaddleEnabled(rightPaddleFront, false);
+        SetPlayerPaddleEnabled(rightPaddleBack, false);
+
+        if (is2V2)
+        {
+            if (_myId == 1) SetPlayerPaddleEnabled(leftPaddleFront, true);
+            else if (_myId == 2) SetPlayerPaddleEnabled(leftPaddleBack, true);
+            else if (_myId == 3) SetPlayerPaddleEnabled(rightPaddleFront, true);
+            else if (_myId == 4) SetPlayerPaddleEnabled(rightPaddleBack, true);
+        }
+        else // 1v1
+        {
+            if (_myId == 1) SetPlayerPaddleEnabled(leftPaddleBack, true);
+            else if (_myId == 2) SetPlayerPaddleEnabled(rightPaddleBack, true);
+        }
+    }
+
+    private void SetPlayerPaddleEnabled(Transform paddleTransform, bool enabledState)
+    {
+        if (paddleTransform != null)
+        {
+            var paddle = paddleTransform.GetComponent<PlayerPaddle>();
+            if (paddle != null) paddle.enabled = enabledState;
+        }
+    }
+
+    private void ApplyInitialPositionsAndMirroring()
+    {
+        float factor = IsTeamB() ? -1f : 1f;
+
+        if (leftPaddleFront != null)
+            leftPaddleFront.position = new Vector3(_startXLeftFront * factor, leftPaddleFront.position.y, 0);
+
+        if (leftPaddleBack != null)
+            leftPaddleBack.position = new Vector3(_startXLeftBack * factor, leftPaddleBack.position.y, 0);
+
+        if (rightPaddleFront != null)
+            rightPaddleFront.position = new Vector3(_startXRightFront * factor, rightPaddleFront.position.y, 0);
+
+        if (rightPaddleBack != null)
+            rightPaddleBack.position = new Vector3(_startXRightBack * factor, rightPaddleBack.position.y, 0);
     }
 
     private void SendMyPosition()
     {
-        Transform myPaddle = null;
-        if (_myId == 1) myPaddle = leftPaddleFront;
-        else if (_myId == 2) myPaddle = leftPaddleBack;
-        else if (_myId == 3) myPaddle = rightPaddleFront;
-        else if (_myId == 4) myPaddle = rightPaddleBack;
+        Transform myPaddle = GetMyPaddle();
 
         if (myPaddle != null)
         {
@@ -142,12 +199,41 @@ public class PongUdpClient : MonoBehaviour
         }
     }
 
+    private Transform GetMyPaddle()
+    {
+        bool is2V2 = (MenuManager.SelectedMode == GameMode.Multiplayer2V2);
+
+        if (is2V2)
+        {
+            if (_myId == 1) return leftPaddleFront;
+            if (_myId == 2) return leftPaddleBack;
+            if (_myId == 3) return rightPaddleFront;
+            if (_myId == 4) return rightPaddleBack;
+        }
+        else // 1v1
+        {
+            if (_myId == 1) return leftPaddleBack;
+            if (_myId == 2) return rightPaddleBack;
+        }
+        return null;
+    }
+
     private void UpdateOtherPaddles()
     {
-        if (_myId != 1 && leftPaddleFront != null) MovePaddle(leftPaddleFront, _playerTargetY[1]);
-        if (_myId != 2 && leftPaddleBack != null) MovePaddle(leftPaddleBack, _playerTargetY[2]);
-        if (_myId != 3 && rightPaddleFront != null) MovePaddle(rightPaddleFront, _playerTargetY[3]);
-        if (_myId != 4 && rightPaddleBack != null) MovePaddle(rightPaddleBack, _playerTargetY[4]);
+        bool is2V2 = (MenuManager.SelectedMode == GameMode.Multiplayer2V2);
+
+        if (is2V2)
+        {
+            if (_myId != 1 && leftPaddleFront != null) MovePaddle(leftPaddleFront, _playerTargetY[1]);
+            if (_myId != 2 && leftPaddleBack != null) MovePaddle(leftPaddleBack, _playerTargetY[2]);
+            if (_myId != 3 && rightPaddleFront != null) MovePaddle(rightPaddleFront, _playerTargetY[3]);
+            if (_myId != 4 && rightPaddleBack != null) MovePaddle(rightPaddleBack, _playerTargetY[4]);
+        }
+        else // 1v1
+        {
+            if (_myId == 1 && rightPaddleBack != null) MovePaddle(rightPaddleBack, _playerTargetY[2]);
+            if (_myId == 2 && leftPaddleBack != null) MovePaddle(leftPaddleBack, _playerTargetY[1]);
+        }
     }
 
     private void MovePaddle(Transform paddle, float targetY)
